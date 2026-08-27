@@ -7,7 +7,7 @@ import { StepTwist } from './components/StepTwist';
 import { StepRubric } from './components/StepRubric';
 import { StepPitch } from './components/StepPitch';
 import { ReasoningLog } from './components/ReasoningLog';
-import { callGemini, callGeminiStream } from './api';
+import { callGemini, callGeminiStreamWithFallback } from './api';
 import { formatForPrompt } from './flavourMatrix';
 import { Type } from '@google/genai';
 import { Recipe, RubricEvaluation } from './types';
@@ -22,6 +22,7 @@ export default function App() {
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
 
   const steps = [
     { num: 1, label: 'Brief', locked: false, completed: !!session.brief },
@@ -160,6 +161,7 @@ Set \`pair_basis\` to the exact pair from the precomputed analysis above that th
 
   const handleGenerateRecipe = async () => {
     if (session.selectedConceptIndex === null || !session.concepts || !session.brief) return;
+    setGenError(null);
     setIsGenerating(true);
 
     const concept = session.concepts[session.selectedConceptIndex];
@@ -191,13 +193,12 @@ Return JSON for a recipe including:
       required: ["ingredients", "method", "timeline", "plating_instruction", "rationale"]
     };
 
+    const prevRecipe = session.recipe;
+
     try {
       const start = Date.now();
 
-      let fullText = "";
-
-      // Placeholder while the stream fills. Raw JSON is never shown to the
-      // user — partial output stays in the buffer until it parses cleanly.
+      // Skeleton so the UI has something to fill while the stream lands.
       updateSession(s => ({
         ...s,
         recipe: {
@@ -209,25 +210,25 @@ Return JSON for a recipe including:
         }
       }));
 
-      const stream = callGeminiStream(prompt, schema, 0.4);
-      for await (const chunk of stream) {
-        fullText += chunk;
-        try {
-          const cleanText = fullText.replace(/^```json\n?/, '').replace(/```\n?$/, '').trim();
-          const parsed = JSON.parse(cleanText);
-          updateSession(s => ({ ...s, recipe: parsed }));
-        } catch {
-          // Still incomplete. Keep buffering; the skeleton state stays up.
-        }
-      }
+      const { result, usedFallback } = await callGeminiStreamWithFallback(
+        prompt,
+        schema,
+        0.4,
+        (partial) => updateSession(s => ({ ...s, recipe: partial }))
+      );
 
-      const cleanFinal = fullText.replace(/^```json\n?/, '').replace(/```\n?$/, '').trim();
-      const finalParsed = JSON.parse(cleanFinal);
-      addLog('Generate Recipe (Stream)', prompt, Date.now() - start);
-      updateSession(s => ({ ...s, recipe: finalParsed }));
+      addLog(
+        usedFallback ? 'Generate Recipe (Fallback, no stream)' : 'Generate Recipe (Stream)',
+        prompt,
+        Date.now() - start
+      );
+      updateSession(s => ({ ...s, recipe: result }));
     } catch (e) {
       console.error(e);
       addLog('Generate Recipe (Error)', String(e), 0);
+      // Roll the skeleton back, or the step reads as complete when it is not.
+      updateSession(s => ({ ...s, recipe: prevRecipe }));
+      setGenError('Recipe generation failed. Open the browser console for the exact error — on a corporate network this is usually the proxy blocking the request.');
     } finally {
       setIsGenerating(false);
     }
@@ -663,6 +664,11 @@ Provide it as an array of objects with label and content.`;
         </header>
 
         <section className="flex-1 p-8 flex flex-col space-y-6 overflow-y-auto">
+          {genError && (
+            <div className="mb-6 px-4 py-3 border border-[#FAC1BC] bg-[#FEEAE8] text-[#7A2E2E] text-[12px] rounded-[4px]">
+              {genError}
+            </div>
+          )}
           {currentStep === 1 && <StepBrief key={session.id} session={session} onGenerate={handleGenerateConcepts} isGenerating={isGenerating} />}
           {currentStep === 2 && session.concepts && <StepConcepts key={session.id} concepts={session.concepts} onSelect={handleSelectConcept} selectedIndex={session.selectedConceptIndex} />}
           {currentStep === 3 && <StepRecipe key={session.id} concept={session.selectedConceptIndex !== null && session.concepts ? session.concepts[session.selectedConceptIndex] : null} recipe={session.recipe} onGenerate={handleGenerateRecipe} isGenerating={isGenerating} />}
