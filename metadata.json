@@ -1,0 +1,8 @@
+{
+  "name": "Remix MISE Culinary Decision Engine",
+  "description": "A culinary decision engine for a restricted-pantry cooking competition.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
