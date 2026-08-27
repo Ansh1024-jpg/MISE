@@ -75,6 +75,7 @@ ${JSON.stringify(session.twistPlan, null, 2)}`);
   };
 
   const handleGenerateConcepts = async (brief: any) => {
+    setGenError(null);
     setIsGenerating(true);
     updateSession(s => ({ ...s, brief }));
 
@@ -149,6 +150,7 @@ Set \`pair_basis\` to the exact pair from the precomputed analysis above that th
     } catch (e) {
       console.error(e);
       addLog('Generate Concepts (Error)', String(e), 0);
+      setGenError(`Concepts generation failed. ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsGenerating(false);
     }
@@ -228,7 +230,7 @@ Return JSON for a recipe including:
       addLog('Generate Recipe (Error)', String(e), 0);
       // Roll the skeleton back, or the step reads as complete when it is not.
       updateSession(s => ({ ...s, recipe: prevRecipe }));
-      setGenError('Recipe generation failed. Open the browser console for the exact error — on a corporate network this is usually the proxy blocking the request.');
+      setGenError(`Recipe generation failed. ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsGenerating(false);
     }
@@ -240,6 +242,7 @@ Return JSON for a recipe including:
   };
 
   const handleGenerateTwist = async (constraint: string) => {
+    setGenError(null);
     if (!session.recipe) return;
     setIsGenerating(true);
     updateSession(s => ({ ...s, twistConstraint: constraint, twistSkipped: false }));
@@ -287,12 +290,14 @@ Also output the fully updated new_recipe object (ingredients and method).`;
     } catch (e) {
       console.error(e);
       addLog('Generate Twist (Error)', String(e), 0);
+      setGenError(`Twist generation failed. ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsGenerating(false);
     }
   };
 
   const handleGenerateRubric = async () => {
+    setGenError(null);
     if (!session.recipe) return;
     setIsGenerating(true);
 
@@ -354,12 +359,14 @@ Reasoning must cite something specific from the dish state above.`;
     } catch (e) {
       console.error(e);
       addLog('Generate Rubric (Error)', String(e), 0);
+      setGenError(`Rubric generation failed. ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsGenerating(false);
     }
   };
 
   const handleGeneratePitch = async () => {
+    setGenError(null);
     if (!session.rubric) return;
     setIsGenerating(true);
 
@@ -404,6 +411,7 @@ Provide it as an array of objects with label and content.`;
     } catch (e) {
       console.error(e);
       addLog('Generate Pitch (Error)', String(e), 0);
+      setGenError(`Pitch generation failed. ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsGenerating(false);
     }

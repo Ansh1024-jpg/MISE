@@ -1,3 +1,18 @@
+/** Pull the server's JSON error message out of a failed response. */
+async function describeFailure(res: Response): Promise<string> {
+  let detail = '';
+  try {
+    const body = await res.json();
+    detail = body?.error ? `: ${body.error}` : '';
+  } catch {
+    // Non-JSON body (proxy error page, gateway timeout). statusText is all we get.
+  }
+  if (res.status === 429) {
+    return `Rate limit reached (429)${detail}. Raise RATE_LIMIT_PER_HOUR on the server, or wait for the window to reset.`;
+  }
+  return `Request failed: ${res.status} ${res.statusText}${detail}`;
+}
+
 export async function callGemini(
   prompt: string,
   schema?: any,
@@ -9,7 +24,7 @@ export async function callGemini(
     body: JSON.stringify({ prompt, schema, temperature })
   });
   if (!res.ok) {
-    throw new Error(`API Error: ${res.statusText}`);
+    throw new Error(await describeFailure(res));
   }
   const data = await res.json();
 
@@ -39,8 +54,11 @@ export async function* callGeminiStream(
     signal
   });
 
-  if (!res.ok || !res.body) {
-    throw new Error(`API Error: ${res.statusText}`);
+  if (!res.ok) {
+    throw new Error(await describeFailure(res));
+  }
+  if (!res.body) {
+    throw new Error('Response had no readable body — the stream was likely stripped in transit.');
   }
 
   const reader = res.body.getReader();
@@ -64,23 +82,50 @@ export async function* callGeminiStream(
   }
 }
 
+const NO_STREAM_KEY = 'mise_no_stream';
+
+/** True once streaming has been proven not to work on this browser/network. */
+export function streamingDisabled(): boolean {
+  try {
+    return localStorage.getItem(NO_STREAM_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function setStreamingDisabled(v: boolean) {
+  try {
+    if (v) localStorage.setItem(NO_STREAM_KEY, '1');
+    else localStorage.removeItem(NO_STREAM_KEY);
+  } catch {
+    // Private mode or storage disabled. Nothing to remember; just retry streaming.
+  }
+}
+
 /**
  * Stream if the network allows it, otherwise fall back to a single request.
  *
- * Corporate proxies and SSL-inspecting middleboxes routinely buffer or drop
- * `text/event-stream`, which leaves the stream open with nothing arriving.
- * If no chunk lands within `firstChunkTimeoutMs`, abort and take the
- * non-streaming path so the step still completes.
+ * SSL-inspecting corporate proxies routinely buffer or drop `text/event-stream`,
+ * which leaves the connection open with nothing arriving. If no chunk lands
+ * within `firstChunkTimeoutMs`, abort and take the non-streaming path.
+ *
+ * The outcome is remembered, so a network that has already failed once does not
+ * pay the timeout again on every subsequent generation.
  */
 export async function callGeminiStreamWithFallback(
   prompt: string,
   schema: any,
   temperature: number,
   onPartial: (parsed: any) => void,
-  firstChunkTimeoutMs = 20000
+  firstChunkTimeoutMs = 10000
 ): Promise<{ result: any; usedFallback: boolean }> {
   const clean = (t: string) =>
     t.replace(/^```json\n?/, '').replace(/```\n?$/, '').trim();
+
+  if (streamingDisabled()) {
+    const result = await callGemini(prompt, schema, temperature);
+    return { result, usedFallback: true };
+  }
 
   const controller = new AbortController();
   let sawChunk = false;
@@ -116,6 +161,8 @@ export async function callGeminiStreamWithFallback(
     // Stream was empty, truncated, or mangled in transit.
   }
 
+  // Streaming produced nothing usable. Remember that and stop retrying it.
+  setStreamingDisabled(true);
   const result = await callGemini(prompt, schema, temperature);
   return { result, usedFallback: true };
 }
